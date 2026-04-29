@@ -96,7 +96,7 @@ def jitted_insert_kv_cache_slices(
 )
 def stack_kv_cache_cross_layers(
         kv_caches: List[jax.Array], block_ids: jax.Array,
-        num_blocks: int) -> Tuple[List[jax.Array], List[jax.Array]]:
+        num_blocks: int) -> Tuple[List[jax.Array], jax.Array]:
     """
     This uses jax.tree.map to apply the operation across all layers.
     """
@@ -107,16 +107,9 @@ def stack_kv_cache_cross_layers(
     gathered_kv_layers = jax.tree.map(_gather_blocks, kv_caches)
     stacked_blocks = jnp.stack(gathered_kv_layers, axis=1)
 
-    # Split the stacked_blocks along axis=0 into individual blocks
-    # NOTE(jcgu): num_blocks == len(block_ids)
-    split_blocks = jnp.split(stacked_blocks,
-                             indices_or_sections=num_blocks,
-                             axis=0)
-    # split_blocks = jnp.array_split(stacked_blocks, num_blocks, axis=0)
-
     kv_caches = jax.lax.optimization_barrier(kv_caches)
 
-    return kv_caches, split_blocks
+    return kv_caches, stacked_blocks
 
 
 # @functools.partial(
@@ -161,7 +154,7 @@ def stack_kv_cache_cross_layers(
 
 def update_kv_caches_one(
     kv_caches: List[jax.Array],
-    stacked_blocks: List[jax.Array],
+    stacked_blocks: jax.Array,
     block_indices: List[int],
     mesh: Mesh,
     replicated_sharding: PartitionSpec | None = None,
@@ -213,7 +206,7 @@ def pre_update_kv_caches(
     donate_argnames=("kv_caches", ),
 )
 def update_kv_caches(kv_caches: List[jax.Array],
-                     stacked_blocks: List[jax.Array], src_offsets: jax.Array,
+                     stacked_blocks: jax.Array, src_offsets: jax.Array,
                      dest_offsets: jax.Array, chunk_sizes: jax.Array,
                      num_chunks: jax.Array, mesh, src_sharding_spec,
                      dest_sharding_spec,
@@ -223,14 +216,13 @@ def update_kv_caches(kv_caches: List[jax.Array],
 
     Args:
       kv_caches: List of original KV caches for each layer.
-      stacked_blocks: List of gathered blocks, each with shape (1, num_layers, ...).
+      stacked_blocks: Gathered blocks with shape (num_blocks, num_layers, ...).
       block_indices: Array of block indices to update.
 
     Returns:
       List of updated KV caches for each layer.
     """
-    concatenated_blocks = jnp.concatenate(stacked_blocks, axis=0)
-    layer_slices_tuple = jnp.unstack(concatenated_blocks, axis=1)
+    layer_slices_tuple = jnp.unstack(stacked_blocks, axis=1)
     layer_slices_list = list(layer_slices_tuple)
 
     output = kv_transfer.multi_layer_copy(
