@@ -2096,9 +2096,7 @@ class TPUOffloadConnectorWorker:
                 raw_chunked_kv_on_tpu.append(
                     jax.device_put(assembled_kv_on_cpu[i],
                                    self.expanded_device_sharding))
-            jax.block_until_ready(raw_chunked_kv_on_tpu)
 
-            update_kv_start = time.time()
             if self.use_bucketed_swap_ops:
                 self.runner.kv_caches = self._bucketed_update_kv_caches(
                     self.runner.kv_caches,
@@ -2114,14 +2112,11 @@ class TPUOffloadConnectorWorker:
                     self.cached_kv_sharding_spec,
                     self.indices_sharding,
                 )
-            jax.block_until_ready(self.runner.kv_caches)
-            update_duration = time.time() - update_kv_start
             logger.debug(
                 f"Request {meta.req_id}: Loaded {num_tokens_to_load_delta} tokens into "
                 f"{num_blocks_to_load} new blocks; "
                 f" src_chunks: {src_chunks}, "
-                f" dst blocks: {dst_blocks}, "
-                f" insert duration {update_duration} s.")
+                f" dst blocks: {dst_blocks}.")
 
             load_duration = time.time() - request_load_start_time
             load_times.append(load_duration)
