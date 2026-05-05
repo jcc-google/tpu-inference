@@ -1,0 +1,74 @@
+apiVersion: jobset.x-k8s.io/v1alpha2
+kind: JobSet
+metadata:
+  name: {{ .JOB_NAME }}
+  namespace: cloud-devkit-jobs
+spec:
+  successPolicy:
+    operator: All
+    targetReplicatedJobs:
+      - sglang-client
+  replicatedJobs:
+    - name: vllm-server
+      replicas: 1
+      template:
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              nodeSelector:
+                cloud.google.com/gke-tpu-topology: "2x2x1"
+                cloud.google.com/gke-tpu-accelerator: "tpu7x"
+              volumes:
+                - name: dshm
+                  emptyDir:
+                    medium: Memory
+                    sizeLimit: "300Gi"
+              containers:
+                - name: vllm-server
+                  image: {{ .IMAGE }}
+                  env:
+                    - name: EXP_MODEL_NAME
+                      value: "{{ .MODEL_NAME }}"
+                    - name: EXP_GPU_MEM_UTIL
+                      value: "{{ .UTILIZATION }}"
+                    - name: TPU_PREMAPPED_BUFFER_SIZE
+                      value: "17179869184"
+                    - name: TPU_PREMAPPED_BUFFER_TRANSFER_THRESHOLD_BYTES
+                      value: "17179869184"
+                    - name: TPU_OFFLOAD_NUM_CPU_CHUNKS
+                      value: "{{ .CPU_CHUNKS }}"
+                    - name: TPU_OFFLOAD_NUM_STAGING_BLOCKS
+                      value: "{{ .STAGING_BLOCKS }}"
+                  command: ["/bin/bash", "-c"]
+                  args:
+                    - |
+                      vllm serve ${EXP_MODEL_NAME} \
+                          --gpu-memory-utilization ${EXP_GPU_MEM_UTIL} \
+                          --kv-transfer-config '{"kv_connector":"TPUOffloadConnector","kv_connector_module_path":"tpu_inference.offload.tpu_offload_connector","kv_role":"kv_both"}' \
+                          --tensor-parallel-size 8 \
+                          --async-scheduling \
+                          --kv-cache-dtype fp8 \
+                          --block-size 512
+    - name: sglang-client
+      replicas: 1
+      template:
+        spec:
+          backoffLimit: 0
+          template:
+            spec:
+              restartPolicy: Never
+              containers:
+                - name: sglang-client
+                  image: {{ .IMAGE }}
+                  command: ["/bin/bash", "-c"]
+                  args:
+                    - |
+                      until curl -s http://localhost:8000/v1/models; do sleep 5; done
+                      python3 /root/cloud-devkit/sglang/python/sglang/bench_serving.py \
+                          --host="localhost" \
+                          --port="8000" \
+                          --gsp-num-groups="{{ .GROUPS }}" \
+                          --gsp-prompts-per-group="{{ .PROMPTS }}" \
+                          --gsp-output-len="{{ .OUTPUT_LEN }}"
