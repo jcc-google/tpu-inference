@@ -2113,7 +2113,6 @@ class TPUOffloadConnectorWorker:
                     self.cached_kv_sharding_spec,
                     self.indices_sharding,
                 )
-            jax.block_until_ready(self.runner.kv_caches)
             update_duration = time.time() - update_kv_start
             logger.debug(
                 f"Request {meta.req_id}: Loaded {num_tokens_to_load_delta} tokens into "
