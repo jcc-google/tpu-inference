@@ -704,7 +704,7 @@ class TPUOffloadConnectorScheduler():
         )
 
         # external_computed_tokens, load_kv_async
-        return num_to_load, False
+        return num_to_load, True
 
     def update_state_after_alloc(self, request: "Request",
                                  blocks: "KVCacheBlocks",
@@ -1255,6 +1255,7 @@ class TPUOffloadConnectorWorker:
             max_workers=self.num_save_threads,
             thread_name_prefix="tpu_save_handler")
         self.finished_save_reqs: set[ReqId] = set()
+        self.finished_load_reqs: set[ReqId] = set()
         # Tracks if wait_for_save has been called for the current step's metadata.
         self._processed_save_for_step = False
         # On-going asynchronous save operations tracking futures and their associated manifest.
@@ -2133,6 +2134,7 @@ class TPUOffloadConnectorWorker:
             if num_blocks_to_load > 0:
                 self.offload_stats.record_load(req=meta.req_id,
                                                loaded_chunk_ids=src_chunks)
+                self.finished_load_reqs.add(meta.req_id)
             self.metrics_collector.record_h2d_operation()
 
         if load_times:
@@ -2171,10 +2173,8 @@ class TPUOffloadConnectorWorker:
 
         finished_saves = self.finished_save_reqs
         self.finished_save_reqs = set()
-        # TODO: add back self.finished_load_reqs and report it back to
-        # vllm scheduler when async load gets implemented.
-        finished_loads = set()
-        # NOTE(jcgu): both are empty now.
+        finished_loads = self.finished_load_reqs
+        self.finished_load_reqs = set()
         logger.debug(f"Finished saves: {finished_saves}, "
                      f"Finished loads: {finished_loads}")
         return finished_saves, finished_loads
