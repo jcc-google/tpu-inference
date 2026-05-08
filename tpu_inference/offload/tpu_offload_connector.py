@@ -750,6 +750,11 @@ class TPUOffloadConnectorScheduler():
             load_spec.src_chunks = src_chunk_ids
             load_spec.dst_blocks = dst_blocks
             load_spec.can_load = True
+            
+            if not hasattr(self, "_req_all_blocks"):
+                self._req_all_blocks = {}
+            self._req_all_blocks[request.request_id] = all_blocks
+            
             self.load_specs[request.request_id] = load_spec
             self._reqs_being_loaded[request.request_id] |= set(
                 load_spec.src_chunks)
@@ -969,6 +974,8 @@ class TPUOffloadConnectorScheduler():
             self._request_trackers.pop(finished_req_id, None)
             self._unfinished_requests.pop(finished_req_id, None)
             self.load_specs.pop(finished_req_id, None)
+            if hasattr(self, "_req_all_blocks"):
+                self._req_all_blocks.pop(finished_req_id, None)
 
         # Phase 2: Process newly scheduled requests
         # This block handles requests being scheduled for the very first time.
@@ -1093,6 +1100,25 @@ class TPUOffloadConnectorScheduler():
         if metadata.requests_meta:
             logger.debug(
                 f"Prepared {len(metadata.requests_meta)} requests for worker.")
+
+        # Phase 4: Process requests that are waiting for remote KV (Async Load)
+        for req_id, load_spec in list(self.load_specs.items()):
+            request = self._unfinished_requests.get(req_id, None)
+            if not request:
+                continue
+                
+            all_blocks = getattr(self, "_req_all_blocks", {}).get(req_id, [])
+            tokens_for_meta = request.all_token_ids
+            req_meta = TPUReqMeta(
+                req_id=req_id,
+                token_ids=tokens_for_meta,
+                local_block_ids=all_blocks,
+                save_spec=None,
+                load_spec=load_spec,
+            )
+            metadata.requests_meta.append(req_meta)
+            self.load_specs.pop(req_id)
+            logger.debug(f"    - creating metadata for async load req: {req_id}")
 
         # after building connector_metadata, all load_specs should be consumed
         assert len(
