@@ -704,7 +704,7 @@ class TPUOffloadConnectorScheduler():
         )
 
         # external_computed_tokens, load_kv_async
-        return num_to_load, True
+        return num_to_load, num_to_load > 0
 
     def update_state_after_alloc(self, request: "Request",
                                  blocks: "KVCacheBlocks",
